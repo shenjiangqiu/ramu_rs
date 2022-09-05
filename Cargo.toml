@@ -1,0 +1,13 @@
+[package]
+edition = "2021"
+name = "ramu_pim_rust"
+version = "0.1.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+cxx = {version = "1.0.74", features = ["c++20"]}
+enum-as-inner = "0.5.1"
+num_enum = "0.5.7"
+tracing = "0.1.36"
+tracing-subscriber = {version = "0.3.15", features = ["env-filter"]}
