@@ -46,11 +46,7 @@ pub trait DramSpec {
     /// get the first command that a req should issue
     fn get_first_cmd(req_type: &ReqType) -> Self::Command;
     /// get the pre command of a command according to current dram state
-    fn get_pre_cmd<'a>(
-        dram: &Dram<'a, Self>,
-        cmd: &Self::Command,
-        child_id: u64,
-    ) -> Option<Self::Command>;
+    fn get_pre_cmd(dram: &Dram<Self>, cmd: &Self::Command, child_id: u64) -> Option<Self::Command>;
     /// for some level, get the init state
     fn get_start_state(level: &Self::Level) -> State;
     /// convert a addr to a decoded addr  
@@ -90,20 +86,19 @@ pub enum State {
     SelfRefresh,
     NoUse,
 }
-pub struct Dram<'a, T: ?Sized + DramSpec> {
-    pub spec: &'a T,
+pub struct Dram<T: DramSpec + ?Sized> {
     pub level: T::Level,
-    pub children: Vec<Dram<'a, T>>,
+    pub children: Vec<Dram<T>>,
     pub state: State,
     pub next_clk: Vec<u64>,
     pub prev: Vec<VecDeque<u64>>,
     pub id: usize,
 }
-impl<'a, T> Dram<'a, T>
+impl<T> Dram<T>
 where
-    T: DramSpec + ?Sized,
+    T: DramSpec,
 {
-    pub fn new(spec: &'a T, level: T::Level, id: usize) -> Self {
+    pub fn new(spec: &T, level: T::Level, id: usize) -> Self {
         let state = T::get_start_state(&level);
         let child_level = level.next_level().unwrap();
         let mut children = vec![];
@@ -126,7 +121,6 @@ where
         }
         let next_clk = vec![0; T::Command::MAX];
         Self {
-            spec,
             level,
             state,
             children,
@@ -135,7 +129,7 @@ where
             id,
         }
     }
-    pub fn decode(&self, cmd: &T::Command, addr_vec: &[u64]) -> T::Command {
+    pub fn decode(&self, spec: &T, cmd: &T::Command, addr_vec: &[u64]) -> T::Command {
         let child_index = addr_vec[self.level.to_usize() + 1];
         if let Some(command) = T::get_pre_cmd(self, cmd, child_index) {
             tracing::debug!(level = ?self.level, ?command, "find pre command");
@@ -144,7 +138,7 @@ where
             if self.level.is_bank() {
                 return *cmd;
             } else {
-                return self.children[child_index as usize].decode(cmd, addr_vec);
+                return self.children[child_index as usize].decode(spec, cmd, addr_vec);
             }
         }
     }
@@ -152,25 +146,25 @@ where
     pub fn get_first_cmd(&self, req_type: &ReqType) -> T::Command {
         T::get_first_cmd(req_type)
     }
-    pub fn update(&mut self, cmd: &T::Command, addr_vec: &[u64], clk: u64) {
-        self.update_state(cmd, addr_vec);
-        self.update_timming(cmd, addr_vec, clk);
+    pub fn update(&mut self, spec: &T, cmd: &T::Command, addr_vec: &[u64], clk: u64) {
+        self.update_state(spec, cmd, addr_vec);
+        self.update_timming(spec, cmd, addr_vec, clk);
     }
-    fn update_state(&mut self, cmd: &T::Command, addr_vec: &[u64]) {
+    fn update_state(&mut self, spec: &T, cmd: &T::Command, addr_vec: &[u64]) {
         let child_level = self.level.next_level().unwrap();
         let child_index = addr_vec[child_level.to_usize()];
         tracing::debug!(level=?self.level,?child_level,child_index,"trying to update state");
-        self.spec.update_state(self, cmd, child_index);
-        if self.level == self.spec.get_scope(cmd) || self.children.is_empty() {
+        spec.update_state(self, cmd, child_index);
+        if self.level == spec.get_scope(cmd) || self.children.is_empty() {
             return;
         }
-        self.children[child_index as usize].update_state(cmd, addr_vec);
+        self.children[child_index as usize].update_state(spec, cmd, addr_vec);
     }
-    fn update_timming(&mut self, cmd: &T::Command, addr_vec: &[u64], clk: u64) {
+    fn update_timming(&mut self, spec: &T, cmd: &T::Command, addr_vec: &[u64], clk: u64) {
         let target_id = addr_vec[self.level.to_usize()] as usize;
         if target_id != self.id {
             // i'm the sibling not the child, so only tigger the sibling timming
-            for timing in self.spec.get_timming(&self.level, cmd) {
+            for timing in spec.get_timming(&self.level, cmd) {
                 if !timing.sibling {
                     // only tigger the sibling
                     continue;
@@ -187,7 +181,7 @@ where
             self.prev[cmd.to_usize()].pop_back();
             self.prev[cmd.to_usize()].push_front(clk);
         }
-        for timing in self.spec.get_timming(&self.level, cmd) {
+        for timing in spec.get_timming(&self.level, cmd) {
             if timing.sibling {
                 continue;
             }
@@ -207,18 +201,18 @@ where
             self.next_clk[timing.cmd.to_usize()] = future.max(self.next_clk[timing.cmd.to_usize()]);
         }
         self.children.iter_mut().for_each(|child| {
-            child.update_timming(cmd, addr_vec, clk);
+            child.update_timming(spec, cmd, addr_vec, clk);
         });
     }
     /// return if the command is ok to issue
-    pub fn check(&self, cmd: &T::Command, addr_vec: &[u64], clk: u64) -> bool {
+    pub fn check(&self, spec: &T, cmd: &T::Command, addr_vec: &[u64], clk: u64) -> bool {
         if clk < self.get_next_avaliable_clk(cmd) {
             return false;
         }
         if let Some(child_level) = self.level.next_level() {
-            if self.spec.get_scope(cmd) != self.level && !self.children.is_empty() {
+            if spec.get_scope(cmd) != self.level && !self.children.is_empty() {
                 let child_index = addr_vec[child_level.to_usize()];
-                return self.children[child_index as usize].check(cmd, addr_vec, clk);
+                return self.children[child_index as usize].check(spec, cmd, addr_vec, clk);
             }
         }
         true

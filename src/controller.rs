@@ -45,8 +45,8 @@ pub enum RunningMode {
     Reading,
     Writing,
 }
-pub struct Controller<'a, T: DramSpec + ?Sized> {
-    pub channel: Dram<'a, T>,
+pub struct Controller<T: DramSpec> {
+    pub channel: Dram<T>,
     pub scheduler: Scheduler,
     pub row_policy: RowPolicy,
     pub row_table: RowTable,
@@ -62,11 +62,11 @@ pub struct Controller<'a, T: DramSpec + ?Sized> {
     pub wr_low_watermark: f32,
 }
 
-impl<'a, T> Controller<'a, T>
+impl<T> Controller<T>
 where
     T: DramSpec,
 {
-    pub fn new(_config: &Config, dram: Dram<'a, T>) -> Self {
+    pub fn new(_config: &Config, dram: Dram<T>) -> Self {
         Self {
             channel: dram,
             scheduler: Default::default(),
@@ -101,7 +101,7 @@ where
 
         Ok(())
     }
-    pub fn tick(&mut self, clk: u64) {
+    pub fn tick(&mut self, spec: &T, clk: u64) {
         // serve pending requests
         if let Some(req) = self.pending_queue.pop_front() {
             if req.finish_time <= clk {
@@ -134,11 +134,11 @@ where
         }
         // find the best command to schedule
         if let Some((index, req)) = self.scheduler.get_best_req(&self.act_queue, &self.channel) {
-            let cmd = self.get_first_cmd(req);
+            let cmd = self.get_first_cmd(spec, req);
             let is_last = cmd == T::get_first_cmd(&req.req_type);
-            if self.is_ready_cmd(&cmd, &req.addr_vec, clk) {
-                self.issue_cmd(cmd, &req.addr_vec.clone(), clk);
-                self.handle_after_issue(index, &cmd, is_last, QueueType::Act, clk);
+            if self.is_ready_cmd(spec, &cmd, &req.addr_vec, clk) {
+                self.issue_cmd(spec, cmd, &req.addr_vec.clone(), clk);
+                self.handle_after_issue(spec, index, &cmd, is_last, QueueType::Act, clk);
                 return;
             } else {
                 // not find any valid command in act queue
@@ -148,12 +148,12 @@ where
         // not find the act queue req
         let (queue, queue_type) = self.get_best_queue();
         if let Some((index, req)) = self.scheduler.get_best_req(queue, &self.channel) {
-            let cmd = self.get_first_cmd(req);
+            let cmd = self.get_first_cmd(spec, req);
             let is_last = cmd == T::get_first_cmd(&req.req_type);
-            if self.is_ready_cmd(&cmd, &req.addr_vec, clk) {
+            if self.is_ready_cmd(spec, &cmd, &req.addr_vec, clk) {
                 // pop the request from the queue
-                self.issue_cmd(cmd, &req.addr_vec.clone(), clk);
-                self.handle_after_issue(index, &cmd, is_last, queue_type, clk);
+                self.issue_cmd(spec, cmd, &req.addr_vec.clone(), clk);
+                self.handle_after_issue(spec, index, &cmd, is_last, queue_type, clk);
                 return;
             } else {
                 // not ready
@@ -167,8 +167,8 @@ where
     pub fn is_ready_req(&self, _cmd: &Request) -> bool {
         todo!("implement me")
     }
-    pub fn is_ready_cmd(&self, cmd: &T::Command, addr_vec: &[u64], clk: u64) -> bool {
-        self.channel.check(cmd, addr_vec, clk)
+    pub fn is_ready_cmd(&self, spec: &T, cmd: &T::Command, addr_vec: &[u64], clk: u64) -> bool {
+        self.channel.check(spec, cmd, addr_vec, clk)
     }
     pub fn is_row_hit_req(&self, _req: &Request) -> bool {
         todo!("implement me")
@@ -189,17 +189,18 @@ where
         todo!("implement me")
     }
 
-    fn get_first_cmd(&self, req: &Request) -> T::Command {
+    fn get_first_cmd(&self, spec: &T, req: &Request) -> T::Command {
         let frist_cmd = self.channel.get_first_cmd(&req.req_type);
         tracing::debug!(?frist_cmd, "the init cmd");
-        return self.channel.decode(&frist_cmd, &req.addr_vec);
+        return self.channel.decode(spec, &frist_cmd, &req.addr_vec);
     }
-    fn issue_cmd(&mut self, cmd: T::Command, addr_vec: &[u64], clk: u64) {
+    fn issue_cmd(&mut self, spec: &T, cmd: T::Command, addr_vec: &[u64], clk: u64) {
         tracing::debug!(?cmd, clk, "issue cmd");
-        self.channel.update(&cmd, addr_vec, clk);
+        self.channel.update(spec, &cmd, addr_vec, clk);
     }
     fn handle_after_issue(
         &mut self,
+        spec: &T,
         cmd_index: usize,
         cmd: &T::Command,
         is_last: bool,
@@ -217,7 +218,7 @@ where
             let mut req = queue.queue.remove(cmd_index).unwrap();
             match req.req_type {
                 ReqType::Read => {
-                    req.finish_time = clk + self.channel.spec.get_read_latency();
+                    req.finish_time = clk + spec.get_read_latency();
                     tracing::debug!(?req, clk, req.finish_time, "read request finished");
 
                     self.pending_queue.push_back(req);
@@ -268,7 +269,7 @@ where
 mod tests {
     use crate::ddr4::{Level, DDR4};
     use crate::dram::LevelTrait;
-    use crate::test::init_logger;
+    use crate::init_logger;
 
     use super::*;
 
@@ -293,11 +294,11 @@ mod tests {
         for i in 0..48 {
             // in cycle 22, it will be rd(act to rd)
             // in cycle
-            controller.tick(i);
+            controller.tick(&ddr4, i);
         }
         // in cycle 48, it will be finished(rd latency)
         assert!(controller.finished_queue.is_empty());
-        controller.tick(48);
+        controller.tick(&ddr4, 48);
         assert_eq!(controller.finished_queue.len(), 1);
     }
 }

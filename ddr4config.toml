@@ -1,0 +1,5 @@
+channels = 1
+ddr4_org = "DDR4_4Gb_x8"
+ddr4_speed = "DDR4_2400R"
+mapping_type = "ChRaBaRoCo"
+ranks = 1

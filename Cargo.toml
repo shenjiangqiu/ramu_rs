@@ -1,13 +1,21 @@
 [package]
+authors = ["Jiangqiu Shen"]
+description = "A simple, fast, and safe Rust library for ramulator"
 edition = "2021"
-name = "ramu_pim_rust"
+license = "MIT"
+name = "ramu_rs"
+repository = "https://github.com/shenjiangqiu/ramu_rs"
 version = "0.1.0"
-
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 cxx = {version = "1.0.74", features = ["c++20"]}
 enum-as-inner = "0.5.1"
 num_enum = "0.5.7"
+serde = {version = "1.0.144", features = ["derive"]}
+toml = "0.5.9"
 tracing = "0.1.36"
 tracing-subscriber = {version = "0.3.15", features = ["env-filter"]}
+
+[lib]
+crate-type = ["staticlib", "cdylib", "rlib"]

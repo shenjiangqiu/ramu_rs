@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 
+use serde::{Deserialize, Serialize};
+
 use crate::dram::LevelTrait;
 use crate::{
     config::Config,
@@ -8,37 +10,42 @@ use crate::{
     request::Request,
 };
 pub trait MemoryTrait {
+    type T: DramSpec;
     fn clk_ns(&self) -> f64;
     fn tick(&mut self);
     fn try_send(&mut self, req: Request) -> Result<(), Request>;
     fn try_recv(&mut self) -> Option<Request>;
     fn pending_requests(&self) -> usize;
     fn finish(&mut self);
+    fn get_spec(&self) -> &Self::T;
+    fn decode_addr(&self, addr: u64) -> Vec<u64>;
+    /// return the addr represented by the addr_vec, note: the lower 6 bits are ignored
+    fn encode_addr(&self, addr: &[u64]) -> u64;
 }
 
-pub struct SimpleMemory<'a, T: DramSpec + ?Sized> {
-    spec: &'a T,
+pub struct SimpleMemory<T: DramSpec> {
+    config: Config,
+    spec: T,
     clk: u64,
-    mapping_type: MappingType,
-    controllers: Vec<Controller<'a, T>>,
+    controllers: Vec<Controller<T>>,
     ret_queue: VecDeque<Request>,
 }
-impl<'a, T> SimpleMemory<'a, T>
+impl<T> SimpleMemory<T>
 where
     T: DramSpec,
 {
-    pub fn new(config: &Config, spec: &'a T) -> Self {
+    pub fn new(config: Config, spec: T) -> Self {
         let mut controllers = Vec::new();
         for i in 0..config.channels {
-            let dram = Dram::new(spec, T::Level::channel(), i);
-            let controller = Controller::new(config, dram);
+            let dram = Dram::new(&spec, T::Level::channel(), i);
+            let controller = Controller::new(&config, dram);
             controllers.push(controller);
         }
 
         SimpleMemory {
+            config,
             spec,
             clk: 0,
-            mapping_type: config.mapping_type,
             controllers,
             ret_queue: Default::default(),
         }
@@ -47,7 +54,8 @@ where
         self.clk
     }
 }
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize)]
+
 pub enum MappingType {
     ChRaBaRoCo,
     RoBaRaCoCh,
@@ -83,10 +91,11 @@ impl MappingType {
     }
 }
 
-impl<'a, T> MemoryTrait for SimpleMemory<'a, T>
+impl<T> MemoryTrait for SimpleMemory<T>
 where
     T: DramSpec,
 {
+    type T = T;
     fn clk_ns(&self) -> f64 {
         todo!()
     }
@@ -94,7 +103,7 @@ where
     fn tick(&mut self) {
         self.clk += 1;
         for controller in self.controllers.iter_mut() {
-            controller.tick(self.clk);
+            controller.tick(&self.spec, self.clk);
             if let Some(req) = controller.finished_queue.pop_front() {
                 self.ret_queue.push_back(req);
             }
@@ -104,7 +113,7 @@ where
     fn try_send(&mut self, mut req: Request) -> Result<(), Request> {
         // init the addr vec!
         if !req.done_setup {
-            let decoded_addr = self.spec.decode_addr(req.addr, &self.mapping_type);
+            let decoded_addr = self.spec.decode_addr(req.addr, &self.config.mapping_type);
             req.addr_vec = decoded_addr;
             req.done_setup = true;
         }
@@ -129,5 +138,17 @@ where
 
     fn try_recv(&mut self) -> Option<Request> {
         self.ret_queue.pop_front()
+    }
+
+    fn get_spec(&self) -> &Self::T {
+        &self.spec
+    }
+
+    fn decode_addr(&self, addr: u64) -> Vec<u64> {
+        self.spec.decode_addr(addr, &self.config.mapping_type)
+    }
+
+    fn encode_addr(&self, addr: &[u64]) -> u64 {
+        self.spec.encode_addr(addr, &self.config.mapping_type)
     }
 }

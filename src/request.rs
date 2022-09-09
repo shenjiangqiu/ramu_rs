@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, enum_as_inner::EnumAsInner)]
 pub enum ReqType {
     Read,
     Write,

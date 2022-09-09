@@ -1,4 +1,5 @@
 use num_enum::{IntoPrimitive, TryFromPrimitive};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     config::Config,
@@ -128,6 +129,8 @@ impl CommandTrait for Command {
     }
 }
 #[allow(non_camel_case_types)]
+#[derive(Debug, Serialize, Deserialize)]
+
 pub enum DDR4Org {
     DDR4_2Gb_x4,
     DDR4_2Gb_x8,
@@ -142,7 +145,8 @@ pub enum DDR4Org {
 }
 
 #[allow(non_snake_case, dead_code)]
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
+
 pub struct SpeedEntry {
     rate: u64,
     freq: f64,
@@ -179,6 +183,8 @@ pub struct DDR4 {
     timing: Vec<Vec<Vec<TimeEntry<Command>>>>,
     read_latency: u64,
 }
+#[derive(Debug, Serialize, Deserialize)]
+
 pub enum Speed {
     DDR4_1600K,
     DDR4_1600L,
@@ -1190,7 +1196,7 @@ impl DramSpec for DDR4 {
         }
     }
 
-    fn get_pre_cmd<'a>(dram: &Dram<'a, Self>, cmd: &Command, child_id: u64) -> Option<Command> {
+    fn get_pre_cmd(dram: &Dram<Self>, cmd: &Command, child_id: u64) -> Option<Command> {
         match (&dram.level, cmd) {
             (Level::Rank, Command::RD) | (Level::Rank, Command::WR) => match dram.state {
                 dram::State::PowerUp => None,
@@ -1364,7 +1370,7 @@ impl DramSpec for DDR4 {
 
 #[cfg(test)]
 mod tests {
-    use crate::test::init_logger;
+    use crate::init_logger;
 
     use super::*;
     #[test]

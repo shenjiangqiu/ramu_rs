@@ -20,6 +20,9 @@ pub fn setup_addr_vec(
     addr_vec: &mut [u64],
     sequence: &[usize],
 ) {
+    assert_eq!(addr_bits.len(), addr_vec.len());
+    assert_eq!(addr_bits.len(), sequence.len());
+
     for &level in sequence.iter() {
         addr_vec[level] = slicing_lower_bits(&mut addr, addr_bits[level]);
     }
