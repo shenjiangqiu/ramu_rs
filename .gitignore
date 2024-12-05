@@ -2,3 +2,4 @@ target
 out.log
 build
 trace.bin
+Cargo.lock
